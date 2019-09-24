@@ -12,6 +12,7 @@ open FSharp.Compiler.Interactive.Shell
 
 open NUnit.Framework
 open System.Reflection.Emit
+open System.Runtime.InteropServices
 
 [<Sealed>]
 type ILVerifier (dllFilePath: string) =
@@ -30,11 +31,13 @@ module CompilerAssert =
 
     let checker = FSharpChecker.Create()
 
+    let isLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+
     let private config = TestFramework.initializeSuite ()
 
     let private defaultProjectOptions =
         {
-            ProjectFileName = "Z:\\test.fsproj"
+            ProjectFileName = match isLinux with | true -> "/tmp/test.fsproj" | false -> "Z:\\test.fsproj"
             ProjectId = None
             SourceFiles = [|"test.fs"|]
 #if !NETCOREAPP
@@ -47,7 +50,7 @@ module CompilerAssert =
                     |> Path.GetDirectoryName
                     |> Directory.EnumerateFiles
                     |> Seq.toArray
-                    |> Array.filter (fun x -> x.ToLowerInvariant().Contains("system."))
+                    |> Array.filter (fun x -> x.ToLowerInvariant().Contains("system.") && x.EndsWith(".dll"))
                     |> Array.map (fun x -> sprintf "-r:%s" x)
                 Array.append [|"--preferreduilang:en-US"; "--targetprofile:netcore"; "--noframework"|] assemblies
 #endif
@@ -89,7 +92,6 @@ module CompilerAssert =
                     defaultProjectOptions.OtherOptions
                     |> Array.append [| "fsc.exe"; inputFilePath; "-o:" + outputFilePath; (if isExe then "--target:exe" else "--target:library"); "--nowin32manifest" |]
                 let errors, _ = checker.Compile args |> Async.RunSynchronously
-
                 f (errors, outputFilePath)
 
             finally
@@ -130,15 +132,15 @@ module CompilerAssert =
 
             Array.zip errors expectedTypeErrors
             |> Array.iter (fun (info, expectedError) ->
-                let (expectedServerity: FSharpErrorSeverity, expectedErrorNumber: int, expectedErrorRange: int * int * int * int, expectedErrorMsg: string) = expectedError
-                Assert.AreEqual(expectedServerity, info.Severity)
+                let (expectedSeverity: FSharpErrorSeverity, expectedErrorNumber: int, expectedErrorRange: int * int * int * int, expectedErrorMsg: string) = expectedError
+                Assert.AreEqual(expectedSeverity, info.Severity)
                 Assert.AreEqual(expectedErrorNumber, info.ErrorNumber, "expectedErrorNumber")
                 Assert.AreEqual(expectedErrorRange, (info.StartLineAlternate, info.StartColumn + 1, info.EndLineAlternate, info.EndColumn + 1), "expectedErrorRange")
-                Assert.AreEqual(expectedErrorMsg, info.Message, "expectedErrorMsg")
+                Assert.AreEqual(expectedErrorMsg.Replace("\r",""), info.Message.Replace("\r",""), "expectedErrorMsg")
             )
 
-    let TypeCheckSingleError (source: string) (expectedServerity: FSharpErrorSeverity) (expectedErrorNumber: int) (expectedErrorRange: int * int * int * int) (expectedErrorMsg: string) =
-        TypeCheckWithErrors (source: string) [| expectedServerity, expectedErrorNumber, expectedErrorRange, expectedErrorMsg |]
+    let TypeCheckSingleError (source: string) (expectedSeverity: FSharpErrorSeverity) (expectedErrorNumber: int) (expectedErrorRange: int * int * int * int) (expectedErrorMsg: string) =
+        TypeCheckWithErrors (source: string) [| expectedSeverity, expectedErrorNumber, expectedErrorRange, expectedErrorMsg |]
 
     let CompileExe (source: string) =
         compile true source (fun (errors, _) -> 
