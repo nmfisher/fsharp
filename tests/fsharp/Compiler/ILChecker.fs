@@ -31,12 +31,10 @@ module ILChecker =
 
     let private checkILAux ildasmArgs dllFilePath expectedIL =
         let ilFilePath = Path.ChangeExtension(dllFilePath, ".il")
-
         let mutable errorMsgOpt = None
         try
             let ildasmPath = config.ILDASM
-
-            exec ildasmPath (ildasmArgs @ [ sprintf "%s /out=%s" dllFilePath ilFilePath ]) |> ignore
+            exec ildasmPath (ildasmArgs @ [ sprintf "%s -OUT=%s" dllFilePath ilFilePath ]) |> ignore
 
             let text = File.ReadAllText(ilFilePath)
             let blockComments = @"/\*(.*?)\*/"
