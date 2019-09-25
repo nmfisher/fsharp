@@ -5497,18 +5497,20 @@ module Bug920236 =
   do test "hfduweyr" (!result = [box 1])
 
 module TripleQuoteStrings = 
+    open System.Runtime.InteropServices
 
     check "ckjenew-0ecwe1" """Hello world""" "Hello world"
     check "ckjenew-0ecwe2" """Hello "world""" "Hello \"world"
     check "ckjenew-0ecwe3" """Hello ""world""" "Hello \"\"world"
-#if UNIX
-#else
 #if INTERACTIVE // FSI prints \r\n or \n depending on PIPE vs FEED so we'll just skip it
 #else
     if System.Environment.GetEnvironmentVariable("APPVEYOR_CI") <> "1" then
-        check "ckjenew-0ecwe4" """Hello 
-""world""" "Hello \r\n\"\"world"
-#endif
+      let expected = 
+        match RuntimeInformation.IsOSPlatform(OSPlatform.Linux) with
+        | true -> "Hello \n\"\"world"
+        | false -> "Hello \r\n\"\"world"
+      check "ckjenew-0ecwe4" """Hello 
+""world""" expected 
 #endif
     // cehcek there is no escaping...
     check "ckjenew-0ecwe5" """Hello \"world""" "Hello \\\"world"
