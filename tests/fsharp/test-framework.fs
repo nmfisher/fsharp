@@ -6,7 +6,7 @@ open System.IO
 open System.Text.RegularExpressions
 open Scripting
 open NUnit.Framework
-
+open System.Runtime.InteropServices
 
 [<RequireQualifiedAccess>]
 module Commands =
@@ -149,10 +149,19 @@ module WindowsPlatform =
 type FSLibPaths = 
     { FSCOREDLLPATH : string }
 
-let requireFile nm = 
-    if Commands.fileExists __SOURCE_DIRECTORY__ nm |> Option.isSome then nm else failwith (sprintf "couldn't find %s. Running 'build test' once might solve this issue" nm)
+let requireFile (nm:string) = 
+    match Commands.fileExists __SOURCE_DIRECTORY__ nm with 
+    | Some _ -> nm
+    | None ->
+     match Commands.fileExists __SOURCE_DIRECTORY__ (nm.ToLower()) with 
+     | Some lowered -> lowered
+     | None -> failwith (sprintf "couldn't find %s. Running 'build test' once might solve this issue" nm)
 
-let packagesDir = Environment.GetEnvironmentVariable("USERPROFILE") ++ ".nuget" ++ "packages"
+let isLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux) 
+
+let packagesDir = 
+  let var = match isLinux with | true -> "HOME" | false -> "USERPROFILE"
+  Environment.GetEnvironmentVariable(var) ++ ".nuget" ++ "packages"
 
 let config configurationName envVars =
 
@@ -179,19 +188,32 @@ let config configurationName envVars =
     let Is64BitOperatingSystem = WindowsPlatform.Is64BitOperatingSystem envVars
     let architectureMoniker = if Is64BitOperatingSystem then "x64" else "x86"
     let CSC = requireFile (packagesDir ++ "Microsoft.Net.Compilers" ++ "2.7.0" ++ "tools" ++ "csc.exe")
-    let ILDASM = requireFile (packagesDir ++ ("runtime.win-" + architectureMoniker + ".Microsoft.NETCore.ILDAsm") ++ "2.0.3" ++ "runtimes" ++ ("win-" + architectureMoniker) ++ "native" ++ "ildasm.exe")
-    let coreclrdll = requireFile (packagesDir ++ ("runtime.win-" + architectureMoniker + ".Microsoft.NETCore.Runtime.CoreCLR") ++ "2.0.3" ++ "runtimes" ++ ("win-" + architectureMoniker) ++ "native" ++ "coreclr.dll")
+    let ILDASM = 
+      match isLinux with
+      | true -> requireFile (packagesDir ++ ("runtime.linux-x64" + ".microsoft.netcore.ildasm") ++ "2.0.3" ++ "runtimes" ++ ("linux-x64") ++ "native" ++ "ildasm")
+      | false -> requireFile (packagesDir ++ ("runtime.win-" + architectureMoniker + ".Microsoft.NETCore.ILDAsm") ++ "2.0.3" ++ "runtimes" ++ ("win-" + architectureMoniker) ++ "native" ++ "ildasm.exe")
+ 
     let PEVERIFY = requireFile (artifactsBinPath ++ "PEVerify" ++ configurationName ++ "net472" ++ "PEVerify.exe")
+//    let PEVERIFY = "/usr/bin/peverify"
     let FSI_FOR_SCRIPTS = artifactsBinPath ++ "fsi" ++ configurationName ++ fsiArchitecture ++ "fsi.exe"
     let FSharpBuild = requireFile (artifactsBinPath ++ "FSharp.Build" ++ configurationName ++ fsharpBuildArchitecture ++ "FSharp.Build.dll")
     let FSharpCompilerInteractiveSettings = requireFile (artifactsBinPath ++ "FSharp.Compiler.Interactive.Settings" ++ configurationName ++ fsharpCompilerInteractiveSettingsArchitecture ++ "FSharp.Compiler.Interactive.Settings.dll")
     let dotNetExe =
-        // first look for {repoRoot}\.dotnet\dotnet.exe, otherwise fallback to %PATH%
-        let repoLocalDotnetPath = repoRoot ++ ".dotnet" ++ "dotnet.exe"
+        let executable = match isLinux with | true -> "dotnet" | false -> "dotnet.exe"
+        // first look for {repoRoot}\.dotnet\dotnet, otherwise fallback to %PATH%
+        let repoLocalDotnetPath = repoRoot ++ ".dotnet" ++ executable
         if File.Exists(repoLocalDotnetPath) then repoLocalDotnetPath
-        else "dotnet.exe"
-    // ildasm requires coreclr.dll to run which has already been restored to the packages directory
-    File.Copy(coreclrdll, Path.GetDirectoryName(ILDASM) ++ "coreclr.dll", overwrite=true)
+        else executable
+    // ildasm requires coreclr.dll (Windows) or libcoreclr.so/System.Private.CoreLib.dll (Linux) to run, which have been restored to the packages directory
+    match isLinux with 
+    | true -> 
+      let libcoreclr = requireFile (packagesDir ++ ("runtime.linux-x64.microsoft.netcore.runtime.coreclr") ++ "2.0.3" ++ "runtimes" ++ "linux-x64" ++ "native" ++ "libcoreclr.so")
+      let cordll = requireFile (packagesDir ++ ("runtime.linux-x64.microsoft.netcore.runtime.coreclr") ++ "2.0.3" ++ "runtimes" ++ "linux-x64" ++ "native" ++ "System.Private.CoreLib.dll")
+      File.Copy(libcoreclr, Path.GetDirectoryName(ILDASM) ++ "libcoreclr.so", overwrite=true)
+      File.Copy(cordll, Path.GetDirectoryName(ILDASM) ++ "System.Private.CoreLib.dll", overwrite=true)
+    | false -> 
+      let coreclrdll = requireFile (packagesDir ++ ("runtime.win-" + architectureMoniker + ".Microsoft.NETCore.Runtime.CoreCLR") ++ "2.0.3" ++ "runtimes" ++ ("win-" + architectureMoniker) ++ "native" ++ "coreclr.dll")
+      File.Copy(coreclrdll, Path.GetDirectoryName(ILDASM) ++ "coreclr.dll", overwrite=true)
 
     let FSI = requireFile (FSI_FOR_SCRIPTS)
 #if !FSHARP_SUITE_DRIVES_CORECLR_TESTS
@@ -267,9 +289,9 @@ let envVars () =
 let initializeSuite () =
 
 #if DEBUG
-    let configurationName = "debug"
+    let configurationName = "Debug"
 #else
-    let configurationName = "release"
+    let configurationName = "Release"
 #endif
     let env = envVars ()
 
