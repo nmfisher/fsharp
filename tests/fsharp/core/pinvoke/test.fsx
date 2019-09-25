@@ -8,6 +8,7 @@ module Core_csext
 open System
 open System.Runtime.InteropServices
 open System.Drawing
+open System.Runtime.CompilerServices
 
 let failures = ref []
 
@@ -16,9 +17,25 @@ let report_failure (s : string) =
     stderr.WriteLine s
     failures := !failures @ [s]
 
+let isLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+
 module GetSystemTimeTest = 
     open System
     open System.Runtime.InteropServices
+
+    [<StructLayout(LayoutKind.Explicit, CharSet=CharSet.Ansi)>]
+    type LinuxTm =
+      struct
+          [<FieldOffset(0)>] val tm_sec : int;
+          [<FieldOffset(4)>] val tm_min : int;
+          [<FieldOffset(8)>] val tm_hour : int;
+          [<FieldOffset(12)>] val tm_mday : int;
+          [<FieldOffset(16)>] val tm_mon : int;
+          [<FieldOffset(20)>] val tm_year : int;
+          [<FieldOffset(24)>] val tm_wday : int;
+          [<FieldOffset(28)>] val tm_yday : int;
+          [<FieldOffset(32)>] val tm_isdst : int;
+      end
 
     [<StructLayout(LayoutKind.Explicit, Size=16, CharSet=CharSet.Ansi)>]
     type MySystemTime = class
@@ -36,7 +53,26 @@ module GetSystemTimeTest =
     [<DllImport("kernel32.dll")>]
     extern void GetSystemTime([<MarshalAs(UnmanagedType.LPStruct)>] MySystemTime ct);
 
+    [<DllImport("libc.so.6")>]
+    extern int64 time(int64& ct);
+
+    [<DllImport("libc.so.6")>]
+    extern IntPtr localtime(int64& time_t);
+
     do 
+      match isLinux with
+      | true ->
+          let mutable timer = 0L
+          let mutable time_t = time(&timer)        
+          let tm = Marshal.PtrToStructure<LinuxTm>(localtime(&time_t))
+          printf "The System time is %d/%d/%d %d:%d:%d\n"
+                             tm.tm_mday
+                             (tm.tm_mon + 1)
+                             (tm.tm_year + 1900)
+                             tm.tm_hour
+                             tm.tm_min
+                             tm.tm_sec
+      | false -> 
           let sysTime = new MySystemTime()
           GetSystemTime(sysTime);
           printf "The System time is %d/%d/%d %d:%d:%d\n" 
@@ -79,10 +115,13 @@ module MemoryStatusTest =
           GlobalMemoryStatusEx( [<In; Out>] MEMORYSTATUSEX lpBuffer);
 
     let main() =
-        let mex = new MEMORYSTATUSEX()
-        GlobalMemoryStatusEx(mex) |> ignore
-        printf "%A\n" mex
-
+        match isLinux with 
+        | false ->
+          let mex = new MEMORYSTATUSEX()
+          GlobalMemoryStatusEx(mex) |> ignore
+          printf "%A\n" mex
+        | true -> 
+          printfn "Running on Linux, skipping MemoryStatusTest1"
     main()
 
 
@@ -117,10 +156,13 @@ module MemoryStatusTest2 =
           GlobalMemoryStatusEx( [<In; Out>] MEMORYSTATUSEX *lpBuffer);
 
     let main() =
-        let mutable mex = new MEMORYSTATUSEX(0)
-        GlobalMemoryStatusEx(&& mex) |> ignore
-        printf "%A\n" mex
-
+      match isLinux with 
+      | false ->      
+          let mutable mex = new MEMORYSTATUSEX(0)
+          GlobalMemoryStatusEx(&& mex) |> ignore
+          printf "%A\n" mex
+      | true ->
+          printfn "Running on Linux, skipping MemoryStatusTest2"
     main()
 
 (*--------------------*)  
